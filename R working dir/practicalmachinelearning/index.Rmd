@@ -1,0 +1,138 @@
+---
+title: "PMLP_Jawbone"
+author: "Mark Rayfield"
+date: "9/15/2020"
+output: html_document
+---
+## Summary
+
+The data analysis conducted below results in a model used to predict personal activity monitoring using a suite of health monitoring devices. A large traning data set with 19,622 observations is made available under the Creative Commons license (CC BY-SA). The data used in this project relates to identifying weight lifting technique as part of human acrivity recognitio. The training data is split into a training and cross validations sets and the rsulting selected model used to predict technique (**classe**) for a limted 20 observation test data set with no **classe** provided. Overall the random forest model selected  has an  out of sample error rate of 0.5% for factor "classe". This write up is available on [link](http://Mark66Rayfield.github.io/practicalmachinelearning) in Rmd and html formats. 
+
+## 1. Data Provided 
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data for the final are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source [HAR](http://groupware.les.inf.puc-rio.br/har) and credit is given to the original authors named below: .
+
+VELLOSO, E.; BULLING, A.; GELLERSEN, H.; UGULINO, W.; FUKS, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+## 1.1 Loading and Cleaning Data
+
+The following libraries and data are loaded for this analysis 
+```{r load_clean}
+library(caret)
+library(knitr)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(parallel)
+library(doParallel)
+# load with NA and blanks as NA's
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings=c("NA",""))
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings=c("NA",""))
+dim(training)
+xtabs(~user_name+classe, data = training)
+```
+
+Observations in the large data set are spread evenly across 6 subject classifiers (factors) and 5 weightlifting classifiers "classe". The limited 20 sample testing data supplied has no outcome (**classe**) supplied. The traning dta will now be cleaned to provide a **tidy** data set for EDA and model building. 
+
+``` {r clean}
+# clean and tidy data 
+# based on training data remove columns with NA values 
+NAs <- apply(training,2,function(x) {sum(is.na(x))}) # sum NA's by column
+train.clean <- training[,which(NAs == 0)]
+test.clean <- testing[,which(NAs == 0)]
+# Removing admin variables, keep user_id [ ,2] for traceback purposes
+removeIndex <- as.integer(c(1,3,4,5,6,7))
+train.clean <- train.clean[,-removeIndex]
+dim(train.clean)
+# test data has no "classe"" variable remove dummy last column "problem_id" repeats "X"
+test.clean <- test.clean[,-removeIndex]
+test.clean <- test.clean[ ,-54]
+dim(test.clean) 
+```
+The tidy sets have  54 columns, timestamp and window variables with limited variance have been removed as predictor variables.
+
+## 1.2 EDA
+
+```{r EDA} 
+Matrix<-cor(train.clean[ , -c(1,54)]) # remove factor variables
+corrplot(Matrix, type="upper", tl.col="black", tl.srt=45, tl.cex = 0.5)
+```
+A significant number of highly correlated predictors are apparent, **colinearity** needs to be addressed in the selected classification model selection.   
+
+## 1.3 Building data sets for training and cross validation. 
+
+The training data set has 19,622 observations, 70% of the data is allocated to the training model and 30% for Cross Validation purposes.
+
+```{r}
+set.seed(12345)
+trainIndex <- createDataPartition(y = train.clean$classe, p=0.7,list=FALSE)
+trainSet <- train.clean[trainIndex,]
+crossValidationSet <- train.clean[-trainIndex,]
+```
+
+## 2.0 Model Selection 
+
+*Classe* is a multi level classification problem which the [caret documentation](https://topepo.github.io/caret/models-clustered-by-tag-similarity.html) indicates is generally solved with *random forrest* but other simpler and less computationally expensive options such as *decision trees* and *linear discriminant analysis (lda)* are possible alternatives.  The latter as a linear approach suffers with correlated variables of which there are a number in this data set and has not been pursued. A *stacked* model approach was a possiblity if desired accuracy was not attained but was not necessary for this projcet. 
+
+As a strategy a simpler decision tree and a random forrest appraoch will be pursued to understand differences in accuracy with this being the criteria for recommended model. The decision tree through `rpart` and the random forest for which parallel precessing is invoked under the caret package.
+
+## 2.1 Decision Tree Training & Cross Validation
+
+```{r part_decision_tree}
+set.seed(1)
+fit <- rpart(classe ~ ., data=trainSet, method="class")
+predict_rpart <- predict(fit, newdata=crossValidationSet, type = "class")
+confusionMatrix(predict_rpart, crossValidationSet$classe)$table
+round(confusionMatrix(predict_rpart, crossValidationSet$classe)$overall[1:4],3)
+# illustrate decision tree
+rpart.plot(fit, type = 5,extra = "auto", fallen.leaves = FALSE)
+```
+
+`rpart::rpart` recursive partitioning and regression tree is a simple and quick model which fits the `trainSet` in less than 30 seconds. When used in prediction on `crossValidationSet` results in 4350 of 5885 observations being classified correctly for an **accuracy** of 73.9% 95% CI (0.728 to 0.750) and its complement out of sample (OOS) error rate of `r 1-confusionMatrix(predict_rpart, crossValidationSet$classe)$overall[1]`.
+
+## 2.2 Random Forest Training & Cross Validation
+
+The random forest method is implemented using `caret::train` with parallel processing invoked as described by course mentor Len Greski [link](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md) to improve run times. 
+does cache need a comma?
+```{r randomforest, cache= TRUE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+# default is bootstrap resampling, using 5 fold K
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+# 409 sec on 4GB RAM 2014 iMac
+system.time(fit_rf <- train(classe ~ ., method="rf",data=trainSet,trControl = fitControl))
+stopCluster(cluster) # end parallel working
+registerDoSEQ()
+```
+
+```{r cross_validation}
+predict_rf <- predict(fit_rf, newdata=crossValidationSet)
+confusionMatrix(predict_rf, crossValidationSet$classe)$table
+round(confusionMatrix(predict_rf, crossValidationSet$classe)$overall[1:4],3)
+```
+
+When used in prediction on `crossValidationSet` results in 5881 of 5885 observations being classified correctly for an **accuracy** of 99.5% 95% CI (0.993 to 0.997) and its complement out of sample (OOS) error rate of `r 1-confusionMatrix(predict_rf, crossValidationSet$classe)$overall[1]`. The accuracy of the prediction on the cross validation dataset has increased to 99.5% or an OOS error rateof 0.05. The following plots show the optimal model had 29 variables and the top 20 predictors in terms of importance.
+
+```{r plots}
+x <- varImp(fit_rf, scale = FALSE)
+par(mfrow = c(1,2))
+plot(fit_rf, log="y")
+plot(x, top = 20)
+```
+
+
+## 3.0 Prediction using provided "Testing" data
+
+Using the preferred random forest model with `mtry=20` and the 20 row `test.clean` data set which has no  **classe** variable provided. The 20 answers are written to the screen and a text file `test.txt` stored in the Github repository.
+```{r test_answers}
+answers <-predict(fit_rf, newdata = test.clean)
+answers
+write.table(answers,file="test.txt",col.names = NA,row.names = TRUE)
+```
+
