@@ -1,0 +1,63 @@
+assignment shiny intercative web page
+========================================================
+author: Mark Rayfield
+date: 2nd October 2020
+autosize: true
+
+Dataset
+========================================================
+
+Interactive shiny app based on `diamonds` dataset supplied with `ggplot2` package. 
+
+- 53,940 observatons across 10 variables
+- predictor variable is logically `price` in USD dollars  
+- linar regression model is fitted to the full data set  
+- Indicates carat (weight) as most importance single variable (absolute t score).  
+- Other factor variables (`cut`, `color` and `clarity`) are non linear
+```{r load data, echo=FALSE}
+library(ggplot2)
+library(caret)
+library(rsconnect)
+data(diamonds) # in ggplot2 package
+```
+
+Linear Regression Results
+========================================================
+
+```{r}
+model_all <- lm(price~.,data=diamonds) 
+head(summary(model_all)$coeff,10)
+model_red <- lm(price~carat, data=diamonds) # based only on single variable
+summary(model_red)$r.squared
+```
+
+Simplified Linear model and Plot for shiny app
+========================================================
+
+```{r prediction}
+newC <- 1.5 # test using 1.5 carat input
+pricePredicted <- predict(model_red, newdata = data.frame(carat = newC))
+paste("weight in carats: ", newC, "USD price: $", round(pricePredicted,2))
+```
+
+``` {r plot, echo=FALSE, warings=FALSE, fig.height = 7, fig.width = 10, fig.align = "center"}
+g = ggplot(diamonds, aes(x = carat, y = price))
+g = g + xlab("Weight (carats)") + xlim(0 ,5)
+g = g + ylab("Price (USD $)") + ylim(0, 17500)
+g = g + geom_point(size = 1, colour = "blue", alpha=0.1)
+g = g + geom_smooth(method = "lm", colour = "red")
+g = g + geom_vline(xintercept = newC)
+g = g + geom_hline(yintercept = pricePredicted[1] )
+g  
+```
+
+Shiny app 
+========================================================
+
+- Allows the user to select a weight in `carats` from 0.3 up to 2.5 carats
+- returns the predicted `price` in USD
+- plots input and prediction realtive to `diamonds` data set from `ggplot2`
+- includes a `submitButton` button to avoid rendering issues during plotting
+- Code for pitch and shiny app are available on github , 
+- This presentation is published on RPubs 
+- Shiny app is hosted on shinyapps.io
